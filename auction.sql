@@ -202,10 +202,8 @@ AS
 BEGIN
     -- Description: This stored procedure removes the product from being listed as auctioned even if there
     -- might have been bids for that product.
-    -- Notes: When users are checking their bid history this product should also show up as an auction
-    -- cancelled
-    SELECT @@version;
--- UPDATE Auction.Product SET STATUS = 'Cancelled' WHERE ProductID = @ProductID;
+    -- Notes: When users are checking their bid history this product should also show up as an auction cancelled
+    UPDATE Auction.Auction SET STATUS = 'Cancelled' WHERE ProductID = @ProductID;
 END
 GO
 
@@ -217,27 +215,37 @@ CREATE OR ALTER PROCEDURE Auction.uspListBidsOffersHistory(
 )
 AS
 BEGIN
-    -- Description: This stored procedure returns customer bid history for specified date time interval. If Active
-    -- parameter is set to false, then all bids should be returned including ones related to products no longer
+    -- Description: This stored procedure returns customer bid history for specified date time interval. 
+    -- If Active parameter is set to false, then all bids should be returned including ones related to products no longer
     -- auctioned or purchased by customer. If Active set to true (default value) only returns products currently
     -- auctioned
-    SELECT @@version;
--- SELECT a.*, p.Status as ActionStatus
--- FROM Auction.Auction AS a
---     INNER JOIN Auction.Product AS p
---     ON a.ProductID = p.ProductID
--- WHERE a.CustomerID = @CustomerID
---     AND BidDate BETWEEN @StartTime AND @EndTime
---     AND (@Active = 0 OR p.Status = 'Active');
+    SELECT
+        b.BidID,
+        b.AuctionID,
+        b.CustomerID,
+        b.BidAmount,
+        b.BidDate,
+        a.AuctionStatus,
+        a.ProductID
+    FROM Auction.Bid AS b
+        INNER JOIN Auction.Auction AS a
+        ON a.AuctionID = b.AuctionID
+        INNER JOIN Auction.Product AS p
+        ON p.ProductID = a.ProductID
+    WHERE a.CustomerID = @CustomerID
+        AND BidDate BETWEEN @StartTime AND @EndTime
+        AND
+        (@Active = 0 OR a.AuctionStatus = 'Active');
 END
 GO
 
-CREATE PROCEDURE Auction.uspUpdateProductAuctionStatus
+CREATE OR ALTER PROCEDURE Auction.uspUpdateProductAuctionStatus
 AS
 BEGIN
     -- Description: This stored procedure updates auction status for all auctioned products. This stored
     -- procedure will be manually invoked before processing orders for dispatch.
-    SELECT @@version;
--- UPDATE Auction.Product set [STATUS] = 'SOLD';
+    UPDATE Auction.Auction set AuctionStatus = 'CLOSED';
+
+-- Note: To determine the winners of each bid, we can get the max bid for each auction, any auction without bids can be marked as 'No Bids'.
 END
 GO
