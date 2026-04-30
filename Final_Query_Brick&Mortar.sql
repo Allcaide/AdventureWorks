@@ -3,57 +3,69 @@
 --Description 
 --This query identifies the top 30 resellers in the United States based on total sales and aggregates their sales at the city level. 
 --The result is used to determine which cities should be excluded from the brick-and-mortar expansion strategy. 
+-- Top 30 reseller cities with total sales
 
-WITH TopStores AS ( 
-   SELECT TOP 30 
-       s.BusinessEntityID, 
-       a.City, 
-       sp.Name AS State, 
-       SUM(soh.SubTotal) AS StoreSales 
-   FROM Sales.SalesOrderHeader soh 
- 
-   JOIN Sales.Customer c 
-       ON soh.CustomerID = c.CustomerID 
- 
-   JOIN Sales.Store s 
-       ON c.StoreID = s.BusinessEntityID 
- 
-   JOIN Person.BusinessEntityAddress bea 
-       ON s.BusinessEntityID = bea.BusinessEntityID 
- 
-   JOIN Person.Address a 
-       ON bea.AddressID = a.AddressID 
- 
-   JOIN Person.StateProvince sp 
-       ON a.StateProvinceID = sp.StateProvinceID 
- 
-   JOIN Person.CountryRegion cr 
-       ON sp.CountryRegionCode = cr.CountryRegionCode 
- 
-   WHERE cr.Name = 'United States' 
-       AND c.StoreID IS NOT NULL 
- 
-   GROUP BY 
-       s.BusinessEntityID, 
-       a.City, 
-       sp.Name 
- 
-   ORDER BY SUM(soh.SubTotal) DESC 
-) 
- 
-SELECT 
-   City, 
-   State, 
-   SUM(StoreSales) AS TotalCitySales 
-FROM TopStores 
- 
-GROUP BY 
-   City, 
-   State 
- 
-ORDER BY 
-   TotalCitySales DESC; 
+WITH US_STORES_CUSTOMERS AS (
+    SELECT DISTINCT
+        c.CustomerID,
+        s.BusinessEntityID AS RetailerID,
+        s.Name AS Retailer,
+        a.City,
+        sp.Name AS State,
+        cr.Name AS Country
+    FROM Sales.Customer c
+    INNER JOIN Sales.Store s
+        ON c.StoreID = s.BusinessEntityID
+    INNER JOIN Person.BusinessEntityAddress bea
+        ON bea.BusinessEntityID = s.BusinessEntityID
+    INNER JOIN Person.Address a
+        ON a.AddressID = bea.AddressID
+    INNER JOIN Person.StateProvince sp
+        ON sp.StateProvinceID = a.StateProvinceID
+    INNER JOIN Person.CountryRegion cr
+        ON cr.CountryRegionCode = sp.CountryRegionCode
+        AND cr.Name = 'United States'
+),
 
+TOP_30_RETAILERS AS (
+    SELECT TOP 30
+        SUM(soh.SubTotal) AS Revenue,
+        c.RetailerID,
+        c.Retailer
+    FROM Sales.SalesOrderHeader soh
+    INNER JOIN US_STORES_CUSTOMERS c
+        ON soh.CustomerID = c.CustomerID
+    GROUP BY 
+        c.RetailerID, 
+        c.Retailer
+    ORDER BY Revenue DESC
+),
+
+CITY_SALES AS (
+    -- Aggregate sales at city level
+    SELECT
+        u.City,
+        u.State,
+        u.Country,
+        SUM(soh.SubTotal) AS TotalCitySales
+    FROM Sales.SalesOrderHeader soh
+    INNER JOIN US_STORES_CUSTOMERS u
+        ON soh.CustomerID = u.CustomerID
+    INNER JOIN TOP_30_RETAILERS t
+        ON u.RetailerID = t.RetailerID
+    GROUP BY
+        u.City,
+        u.State,
+        u.Country
+)
+
+SELECT
+    City,
+    State,
+    Country,
+    TotalCitySales
+FROM CITY_SALES
+ORDER BY TotalCitySales DESC;
 
 
 --A.2 Ranking of US States by Online and Reseller Sales 
