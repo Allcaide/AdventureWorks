@@ -10,7 +10,6 @@ DROP PROCEDURE IF EXISTS Auction.uspTryBidProduct;
 DROP PROCEDURE IF EXISTS Auction.uspListBidsOffersHistory;
 DROP PROCEDURE IF EXISTS Auction.uspRemoveProductFromAuction;
 DROP PROCEDURE IF EXISTS Auction.uspUpdateProductAuctionStatus;
-GO
 
 DROP SCHEMA IF EXISTS Auction;
 GO
@@ -18,155 +17,123 @@ GO
 CREATE SCHEMA Auction;
 GO
 
--- Make dbo the owner. 
--- TODO: make the authorization work for the current user
-ALTER AUTHORIZATION on SCHEMA::Auction to dbo;
+-- Make the current user the owner. 
+DECLARE @CurrentUser NVARCHAR(128) = USER_NAME();
+DECLARE @Sql NVARCHAR(MAX) = 'ALTER AUTHORIZATION ON SCHEMA::Auction TO [' + @CurrentUser + '];';
+EXEC sp_executesql @Sql;
 
-/**
-    Create Auction.Product
-    Select and Insert records from the Production.Product table that 
-    The requirements
-
-    TODO: Confirm if this table is necessary or use the Production.Product table directly.
-    If we decide to do this, we'll need to make sure the Auction.uspAddProductToAuction respects
-    the DiscontinuedDate and ListPrice requirements.
-
-    TODO: Select specific columns, not ALL.
-**/
-SELECT *
+-- Create Auction.Product
+-- Select and Insert records from the Production.Product table that meet the requirements.
+-- We decided to make a new Product table rather than use Production.Product directly
+SELECT
+    ProductID,
+    [Name],
+    ProductNumber,
+    Color,
+    ListPrice,
+    MakeFlag
 INTO Auction.Product
 FROM Production.Product
 WHERE SellEndDate IS NULL
     AND DiscontinuedDate IS NULL
-    AND ListPrice > 0
+    AND ListPrice > 0;
 
 -- Ensure the column doesn't allow NULLs , as required for a Primary Key
 ALTER TABLE Auction.Product 
 ALTER COLUMN ProductID INT NOT NULL;
-GO
 
--- Add the Primary Key constraint
+-- Restore the Primary Key constraint
 ALTER TABLE Auction.Product
 ADD CONSTRAINT PK_Auction_Product PRIMARY KEY (ProductID);
-GO
 
-/**
-    Auction table
-    =============
-    The products on Auction are inserted into this table via Auction.uspAddProductToAuction
-    Only products in this table are available for bidding.
-**/
+-- Store products listed for auction
 CREATE TABLE Auction.Auction
 (
     AuctionID INT IDENTITY PRIMARY KEY NOT NULL,
     ProductID INT NOT NULL REFERENCES Auction.Product(ProductID),
     InitialBidPrice MONEY NOT NULL DEFAULT 0,
-    ExpireDate DATE,---The bid logic asks fot the timestamp with exat date and time, maybe change it to ExpireDate DATETIME2(0),
+    [ExpireDate] DATETIME2(0) NULL,
     AuctionStatus NVARCHAR(20) NOT NULL DEFAULT 'Active',
     ListedDate DATETIME NOT NULL DEFAULT GETUTCDATE(),
     UpdatedDate DATETIME,
-    WinningCustomerID NVARCHAR(50)---I dont know if it works like this with the sales.customer(customerID)
-)
-/**
-    Something like this for the winning customer
-    
+    WinningCustomerID INT NULL
+);
+
+-- Ensure Consistency with Sales.Customer for WinningCustomerID
 ALTER TABLE Auction.Auction
 ADD CONSTRAINT FK_Auction_WinnerCustomer
 FOREIGN KEY (WinningCustomerID)
 REFERENCES Sales.Customer(CustomerID);
 
-**/
-/**
-    On FAQ says only one auction can be active per productID
-Maybe we should implemment some CREATE UNIQUE INDEX on Auction.Auction idk
-**/
+-- Ensure only one Active auction per ProductID (FAQ rule)
+CREATE UNIQUE INDEX UX_Auction_ActiveProduct
+ON Auction.Auction(ProductID)
+WHERE AuctionStatus = 'Active';
 
-/**
-    Bid
-    ===
-    Holds the customer bid history.
-    References a particular Auction by AuctionID, 
-    Actions list product for one with a single productID active at a time. This 
-    means that a single product can appear in the Auction table multiple times to 
-    the particular instance is represented by the AuctionID
-**/
+-- Store bid history per auction
 CREATE TABLE Auction.Bid
 (
     BidID INT IDENTITY PRIMARY KEY NOT NULL,
     AuctionID INT NOT NULL REFERENCES Auction.Auction(AuctionID),
-    CustomerID INT NOT NULL REFERENCES Person.Person(BusinessEntityID),
+    CustomerID INT NOT NULL REFERENCES Sales.Customer(CustomerID),
     BidAmount MONEY NOT NULL DEFAULT 0,
-    BidDate DATETIME NOT NULL DEFAULT GetDate()
+    BidDate DATETIME NOT NULL DEFAULT GETDATE()
 );
 
-/**
-Create Indexes for high workload like MAX(BIdAmount) maybe 
-CREATE INDEX IX_Bid_AuctionID_BidAmount
+-- Indexes for high workload
+CREATE INDEX IX_Bid_AuctionID_BidAmount 
     ON Auction.Bid(AuctionID, BidAmount DESC);
 
 CREATE INDEX IX_Bid_CustomerID_BidDate
     ON Auction.Bid(CustomerID, BidDate DESC);
-**/
 
-/*Create Global Threshold Table for Bids; applies to all Products*/
+-- Global Threshold Table
 CREATE TABLE Auction.Threshold
 (
     Increment MONEY NOT NULL DEFAULT 0,
-    MaximumBidLimit DECIMAL NOT NULL DEFAULT 1
+    MaximumBidLimit DECIMAL(10,4) NOT NULL DEFAULT 1.0
 );
 
-/**Downhere
-If alrteady exist thrshold there's no need to add the line
-We can check the if before adding it
-
-IF NOT EXISTS (SELECT 1 FROM Auction.Threshold)
+-- Insert default threshold once
+IF NOT EXISTS (SELECT 1
+FROM Auction.Threshold)
 BEGIN
-INSERT INTO Auction.Threshold
-    (Increment, MaximumBidLimit)
-VALUES(0.05, 1.0);
-
+    INSERT INTO Auction.Threshold
+        (Increment, MaximumBidLimit)
+    VALUES
+        (0.05, 1.0);
 END
 GO
 
-**/
-INSERT INTO Auction.Threshold
-    (Increment, MaximumBidLimit)
-VALUES(0.05, 1.0);
-GO
+-- Stored Procedures
 
-/* Stored Procedures */
-CREATE PROCEDURE Auction.uspAddProductToAuction(
+CREATE OR ALTER PROCEDURE Auction.uspAddProductToAuction(
     @ProductID INT,
-    @ExpireDate DATE = NULL,---add specific time with datetime2(0) = null
+    @ExpireDate DATETIME2(0) = NULL,
     @InitialBidPrice MONEY = NULL
 )
 AS
 BEGIN
-    -- Description: This stored procedure adds a product as auctioned.
     IF @ExpireDate IS NULL
-    BEGIN
-        SELECT @ExpireDate = DATEADD(week, 1, GETUTCDATE());
-    END
+        SET @ExpireDate = DATEADD(WEEK, 1, SYSUTCDATETIME());
 
     IF @InitialBidPrice IS NULL
     BEGIN
-        DECLARE @MakeFlag INT = 0
-        -- 0 is purchased by AdventureWorks, 1 is manufactured in-house.
+        DECLARE @MakeFlag INT;
         SELECT @MakeFlag = MakeFlag
-        from Auction.Product
-        WHERE ProductID = @ProductID
-        -- UPDATE Auction.Product SET BidPrice = 0.75 * ListPrice WHERE MakeFlag = 0;
-        -- UPDATE Auction.Product SET BidPrice = 0.50 * ListPrice WHERE MakeFlag <> 0;
-        SELECT @InitialBidPrice = CASE @MakeFlag WHEN 0 THEN 0.75 * ListPrice ELSE 0.5 * ListPrice END
         FROM Auction.Product
-        where ProductID = @ProductID
+        WHERE ProductID = @ProductID;
+
+        SELECT @InitialBidPrice =
+            CASE WHEN @MakeFlag = 0 THEN 0.75 * ListPrice ELSE 0.5 * ListPrice END
+        FROM Auction.Product
+        WHERE ProductID = @ProductID;
     END
 
-    -- TODO: Address the issue of two active products.
     INSERT INTO Auction.Auction
         (ProductID, InitialBidPrice, ExpireDate)
-    VALUES(@ProductID, @InitialBidPrice, @ExpireDate)
-
+    VALUES
+        (@ProductID, @InitialBidPrice, @ExpireDate);
 END
 GO
 
@@ -177,33 +144,99 @@ CREATE OR ALTER PROCEDURE Auction.uspTryBidProduct(
 )
 AS
 BEGIN
-    -- SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
-    -- Description: This stored procedure adds a bid on behalf of that customer
-    -- TODO: Add the bidding logic:
-    -- If BidAmount is in range, OK
-    -- If BidAmount is null, then bidamount = threshold.increment more than last bid.
-    -- If BidAmount > threshold.maxbidprice * ListPrice, make BidAmount = threshold.maxbidprice * ListPrice
-    DECLARE @ActiveAuction INT;
-    SELECT @ActiveAuction = AuctionID
-    from Auction.Auction
-    where ProductID = @ProductID AND AuctionStatus = 'Active';
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE
+        @ActiveAuction INT,
+        @ExpireDate DATETIME2(0),
+        @inc MONEY,
+        @maxmult DECIMAL(10,4),
+        @listprice MONEY,
+        @maxbid MONEY,
+        @current MONEY,
+        @minnext MONEY;
+
+    BEGIN TRY
+        SELECT
+        @inc = Increment,
+        @maxmult = MaximumBidLimit
+    FROM Auction.Threshold;
+        IF @inc IS NULL OR @maxmult IS NULL
+            THROW 50010, 'Threshold configuration missing.', 1;
+
+    SELECT @listprice = ListPrice
+    FROM Auction.Product
+    WHERE ProductID = @ProductID;
+    IF @listprice IS NULL
+        THROW 50011, 'Invalid ProductID.', 1;
+
+    SET @maxbid = @maxmult * @listprice;
+
+    BEGIN TRAN;
+    SELECT TOP 1
+        @ActiveAuction = AuctionID,
+        @ExpireDate = ExpireDate
+    FROM Auction.Auction WITH (UPDLOCK, HOLDLOCK)
+    WHERE ProductID = @ProductID
+        AND AuctionStatus = 'Active';
+
+    IF @ActiveAuction IS NULL
+        THROW 50003, 'No active auction.', 1;
+
+    IF @ExpireDate IS NOT NULL AND @ExpireDate <= SYSUTCDATETIME()
+        THROW 50004, 'Auction expired.', 1;
+
+    SELECT @current = MAX(BidAmount)
+    FROM Auction.Bid WITH (UPDLOCK, HOLDLOCK)
+    WHERE AuctionID = @ActiveAuction;
+
+    IF @current IS NULL
+    BEGIN
+        SELECT @current = InitialBidPrice
+        FROM Auction.Auction
+        WHERE AuctionID = @ActiveAuction;
+    END
+
+    SET @minnext = @current + @inc;
+
+    IF @BidAmount IS NULL
+        SET @BidAmount = @minnext;
+    IF @BidAmount < @minnext
+        THROW 50005, 'Bid too low.', 1;
+    IF @BidAmount > @maxbid
+        SET @BidAmount = @maxbid;
 
     INSERT INTO Auction.Bid
         (AuctionID, CustomerID, BidAmount)
     VALUES(@ActiveAuction, @CustomerID, @BidAmount);
 
+    -- If bid reached the maximum allowed bid, close the auction and set the winner
+    IF @BidAmount = @maxbid
+    BEGIN
+        UPDATE Auction.Auction
+        SET AuctionStatus = 'Sold',
+            WinningCustomerID = @CustomerID,
+            UpdatedDate = SYSUTCDATETIME()
+        WHERE AuctionID = @ActiveAuction;
+    END
+
+    COMMIT;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK;
+        THROW;
+    END CATCH
 END
 GO
 
-CREATE OR ALTER PROCEDURE Auction.uspRemoveProductFromAuction(
-    @ProductID INT
-)
+CREATE OR ALTER PROCEDURE Auction.uspRemoveProductFromAuction(@ProductID INT)
 AS
 BEGIN
     -- Description: This stored procedure removes the product from being listed as auctioned even if there
     -- might have been bids for that product.
     -- Notes: When users are checking their bid history this product should also show up as an auction cancelled
-    UPDATE Auction.Auction SET STATUS = 'Cancelled' WHERE ProductID = @ProductID;
+    UPDATE Auction.Auction SET AuctionStatus = 'Cancelled' WHERE ProductID = @ProductID;
 END
 GO
 
@@ -232,8 +265,8 @@ BEGIN
         ON a.AuctionID = b.AuctionID
         INNER JOIN Auction.Product AS p
         ON p.ProductID = a.ProductID
-    WHERE a.CustomerID = @CustomerID
-        AND BidDate BETWEEN @StartTime AND @EndTime
+    WHERE b.CustomerID = @CustomerID
+        AND b.BidDate BETWEEN @StartTime AND @EndTime
         AND
         (@Active = 0 OR a.AuctionStatus = 'Active');
 END
@@ -242,10 +275,65 @@ GO
 CREATE OR ALTER PROCEDURE Auction.uspUpdateProductAuctionStatus
 AS
 BEGIN
-    -- Description: This stored procedure updates auction status for all auctioned products. This stored
-    -- procedure will be manually invoked before processing orders for dispatch.
-    UPDATE Auction.Auction set AuctionStatus = 'CLOSED';
+    -- NOCOUNT ON to avoid printing affected rows
+    -- XACT_ABORT ON so if anything blows up, everything gets rolled back
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
 
--- Note: To determine the winners of each bid, we can get the max bid for each auction, any auction without bids can be marked as 'No Bids'.
+    DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
+
+    BEGIN TRAN;
+
+    -- 1) Auctions that expired AND had bids
+    -- These are considered SOLD. Winner = customer with the highest bid
+    -- Possible problem eheh, BidAmount ties are not expected in the system’s normal operation; in any case, the procedure consistently selects the highest bid
+
+    UPDATE Auction.Auction
+    SET AuctionStatus = 'Sold',
+
+        -- Get the customer who placed the highest bid for this auction
+        WinningCustomerID =
+        (
+            SELECT TOP 1
+        b.CustomerID
+    FROM Auction.Bid b
+    WHERE b.AuctionID = Auction.Auction.AuctionID
+    ORDER BY
+                b.BidAmount DESC   -- highest bid first
+
+        ),
+
+        -- Update timestamp
+        UpdatedDate = @now
+
+    WHERE AuctionStatus = 'Active' -- only active auctions
+        AND ExpireDate IS NOT NULL
+        AND ExpireDate <= @now -- auction already expired
+        AND EXISTS
+      (
+          -- make sure this auction actually had bids
+          SELECT 1
+        FROM Auction.Bid b
+        WHERE b.AuctionID = Auction.Auction.AuctionID
+      );
+
+
+    -- 2) Auctions that expired BUT had no bids, These are marked as Expired w/no winner here
+
+    UPDATE Auction.Auction
+    SET AuctionStatus = 'Expired',
+        UpdatedDate = @now
+    WHERE AuctionStatus = 'Active'
+        AND ExpireDate IS NOT NULL
+        AND ExpireDate <= @now
+        AND NOT EXISTS
+      (
+        -- no bids were placed for this auction
+        SELECT 1
+        FROM Auction.Bid b
+        WHERE b.AuctionID = Auction.Auction.AuctionID
+      );
+
+    COMMIT;
 END
 GO
