@@ -36,6 +36,7 @@ INTO Auction.Product
 FROM Production.Product
 WHERE SellEndDate IS NULL
     AND DiscontinuedDate IS NULL
+    AND SELLENDDATE IS NULL
     AND ListPrice > 0;
 
 -- Ensure the column doesn't allow NULLs , as required for a Primary Key
