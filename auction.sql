@@ -155,16 +155,17 @@ BEGIN
         @listprice MONEY,
         @maxbid MONEY,
         @current MONEY,
-        @minnext MONEY;
+        @minnext MONEY,
+        @now DATETIME2(0) = SYSUTCDATETIME();
 
     BEGIN TRY
-        SELECT
-        @inc = Increment,
-        @maxmult = MaximumBidLimit
+    -- get configuration thresholds
+    SELECT @inc = Increment, @maxmult = MaximumBidLimit
     FROM Auction.Threshold;
         IF @inc IS NULL OR @maxmult IS NULL
             THROW 50010, 'Threshold configuration missing.', 1;
 
+    -- validates product and calculate the price ceiling
     SELECT @listprice = ListPrice
     FROM Auction.Product
     WHERE ProductID = @ProductID;
@@ -176,43 +177,41 @@ BEGIN
     BEGIN TRAN;
     SELECT TOP 1
         @ActiveAuction = AuctionID,
-        @ExpireDate = ExpireDate
-    FROM Auction.Auction WITH (UPDLOCK, HOLDLOCK)
-    WHERE ProductID = @ProductID
-        AND AuctionStatus = 'Active';
+        @ExpireDate = ExpireDate,
+        @current = InitialBidPrice
+    -- Start with initial price as default
+    FROM Auction.Auction WITH (UPDLOCK, ROWLOCK)
+    WHERE ProductID = @ProductID AND AuctionStatus = 'Active';
 
     IF @ActiveAuction IS NULL
         THROW 50003, 'No active auction.', 1;
 
-    IF @ExpireDate IS NOT NULL AND @ExpireDate <= SYSUTCDATETIME()
+    IF @ExpireDate IS NOT NULL AND @ExpireDate <= @now
         THROW 50004, 'Auction expired.', 1;
 
-    SELECT @current = MAX(BidAmount)
-    FROM Auction.Bid WITH (UPDLOCK, HOLDLOCK)
+    -- grab the current highest bid, if any
+    SELECT @current = ISNULL(MAX(BidAmount), @current)
+    FROM Auction.Bid WITH (UPDLOCK)
     WHERE AuctionID = @ActiveAuction;
-
-    IF @current IS NULL
-    BEGIN
-        SELECT @current = InitialBidPrice
-        FROM Auction.Auction
-        WHERE AuctionID = @ActiveAuction;
-    END
 
     SET @minnext = @current + @inc;
 
-    IF @BidAmount IS NULL
-        SET @BidAmount = @minnext;
-    IF @BidAmount < @minnext
+    -- use provided BidAmount or set to minimum next bid
+    SET @BidAmount = ISNULL(@BidAmount, @minnext);
+
+    IF @BidAmount < @minnext -- provided bid amount was picked, but lower than minimum next bid
     BEGIN
         DECLARE @ErrMsg NVARCHAR(200) = 'Bid too low. Minimum bid is ' + CAST(@minnext AS VARCHAR(20));
         THROW 50005, @ErrMsg, 1;
     END
-    IF @BidAmount > @maxbid
-        SET @BidAmount = @maxbid;
 
+    IF @BidAmount > @maxbid SET @BidAmount = @maxbid;
+
+    -- we record the Bid
     INSERT INTO Auction.Bid
         (AuctionID, CustomerID, BidAmount)
-    VALUES(@ActiveAuction, @CustomerID, @BidAmount);
+    VALUES
+        (@ActiveAuction, @CustomerID, @BidAmount);
 
     -- If bid reached the maximum allowed bid, close the auction and set the winner
     IF @BidAmount = @maxbid
@@ -220,11 +219,10 @@ BEGIN
         UPDATE Auction.Auction
         SET AuctionStatus = 'Sold',
             WinningCustomerID = @CustomerID,
-            UpdatedDate = SYSUTCDATETIME()
+            UpdatedDate = @now
         WHERE AuctionID = @ActiveAuction;
     END
-
-    COMMIT;
+        COMMIT;
     END TRY
     BEGIN CATCH
         IF @@TRANCOUNT > 0 ROLLBACK;

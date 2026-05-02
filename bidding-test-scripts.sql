@@ -18,15 +18,15 @@ EXEC Auction.uspTryBidProduct @ProductID = 514, @CustomerID = 3;
 EXEC Auction.uspTryBidProduct @ProductID = 514, @CustomerID = 4, @BidAmount = 150;
 -- too high, use max bid and wins bid
 EXEC Auction.uspTryBidProduct @ProductID = 514, @CustomerID = 3, @BidAmount = 200;
--- some with high bid already won
+-- fails, same with high bid already won
 EXEC Auction.uspTryBidProduct @ProductID = 516, @CustomerID = 3, @BidAmount = 2;
 -- expired
 EXEC Auction.uspTryBidProduct @ProductID = 517, @CustomerID = 3, @BidAmount = 2;
 -- bid too low
 EXEC Auction.uspTryBidProduct @ProductID = 517, @CustomerID = 3, @BidAmount = 67;
---
+-- ok
 EXEC Auction.uspTryBidProduct @ProductID = 517, @CustomerID = 3, @BidAmount = 67.05;
--- 
+-- ok
 EXEC Auction.uspTryBidProduct @ProductID = 517, @CustomerID = 4
 -- winning bid
 -- no longer available, fail
@@ -37,7 +37,9 @@ EXEC Auction.uspListBidsOffersHistory @CustomerID = 3, @StartTime = '2024-01-01'
 EXEC Auction.uspUpdateProductAuctionStatus
 
 SELECT *
+from Auction.Bid
+
+SELECT *
 FROM Auction.Auction
 ORDER BY listeddate asc
 
---
