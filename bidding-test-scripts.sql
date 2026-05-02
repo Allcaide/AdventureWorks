@@ -33,3 +33,11 @@ EXEC Auction.uspTryBidProduct @ProductID = 517, @CustomerID = 4
 
 EXEC Auction.uspListBidsOffersHistory @CustomerID = 3, @StartTime = '2024-01-01', @EndTime = '2027-12-31', @Active = 1
 EXEC Auction.uspListBidsOffersHistory @CustomerID = 3, @StartTime = '2024-01-01', @EndTime = '2027-12-31', @Active = 0
+
+EXEC Auction.uspUpdateProductAuctionStatus
+
+SELECT *
+FROM Auction.Auction
+ORDER BY listeddate asc
+
+--

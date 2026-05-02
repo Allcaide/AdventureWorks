@@ -282,64 +282,31 @@ GO
 CREATE OR ALTER PROCEDURE Auction.uspUpdateProductAuctionStatus
 AS
 BEGIN
-    -- NOCOUNT ON to avoid printing affected rows
-    -- XACT_ABORT ON so if anything blows up, everything gets rolled back
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
-    DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
-
     BEGIN TRAN;
 
-    -- 1) Auctions that expired AND had bids
-    -- These are considered SOLD. Winner = customer with the highest bid
-    -- Possible problem eheh, BidAmount ties are not expected in the system’s normal operation; in any case, the procedure consistently selects the highest bid
-
-    UPDATE Auction.Auction
-    SET AuctionStatus = 'Sold',
-
-        -- Get the customer who placed the highest bid for this auction
-        WinningCustomerID =
+    WITH
+        AuctionResults
+        AS
         (
-            SELECT TOP 1
-        b.CustomerID
-    FROM Auction.Bid b
-    WHERE b.AuctionID = Auction.Auction.AuctionID
-    ORDER BY
-                b.BidAmount DESC   -- highest bid first
-
-        ),
-
-        -- Update timestamp
-        UpdatedDate = @now
-
-    WHERE AuctionStatus = 'Active' -- only active auctions
-        AND ExpireDate IS NOT NULL
-        AND ExpireDate <= @now -- auction already expired
-        AND EXISTS
-      (
-          -- make sure this auction actually had bids
-          SELECT 1
-        FROM Auction.Bid b
-        WHERE b.AuctionID = Auction.Auction.AuctionID
-      );
-
-
-    -- 2) Auctions that expired BUT had no bids, These are marked as Expired w/no winner here
-
-    UPDATE Auction.Auction
-    SET AuctionStatus = 'Expired',
-        UpdatedDate = @now
-    WHERE AuctionStatus = 'Active'
-        AND ExpireDate IS NOT NULL
-        AND ExpireDate <= @now
-        AND NOT EXISTS
-      (
-        -- no bids were placed for this auction
-        SELECT 1
-        FROM Auction.Bid b
-        WHERE b.AuctionID = Auction.Auction.AuctionID
-      );
+            SELECT
+                a.AuctionStatus,
+                a.WinningCustomerID,
+                a.UpdatedDate,
+                b.CustomerID AS NewWinnerID,
+                ROW_NUMBER() OVER (PARTITION BY a.AuctionID ORDER BY b.BidAmount DESC) as BidRank
+            FROM Auction.Auction a WITH (UPDLOCK, ROWLOCK) -- Locks the rows immediately upon selection
+                LEFT JOIN Auction.Bid b ON a.AuctionID = b.AuctionID
+            WHERE a.AuctionStatus = 'Active'
+        )
+    UPDATE AuctionResults
+    SET 
+        AuctionStatus = CASE WHEN NewWinnerID IS NOT NULL THEN 'Sold' ELSE 'Expired' END,
+        WinningCustomerID = NewWinnerID,
+        UpdatedDate = SYSUTCDATETIME()
+    WHERE BidRank = 1;
 
     COMMIT;
 END
