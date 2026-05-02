@@ -49,11 +49,8 @@ WITH
             a.City,
             sp.[Name] AS [State],
             SUM(soh.SubTotal) as TotalSales,
-            DENSE_RANK() OVER(ORDER BY SUM(soh.SubTotal) DESC) AS TotalRank,
             SUM(CASE WHEN soh.OnlineOrderFlag = 1 THEN soh.SubTotal ELSE 0 END) AS OnlineSales,
-            DENSE_RANK() OVER(ORDER BY SUM(CASE WHEN soh.OnlineOrderFlag = 1 THEN soh.SubTotal ELSE 0 END) DESC) AS OnlineRank,
-            SUM(CASE WHEN soh.OnlineOrderFlag = 0 THEN soh.SubTotal ELSE 0 END) AS ResellerSales,
-            DENSE_RANK() OVER(ORDER BY SUM(CASE WHEN soh.OnlineOrderFlag = 0 THEN soh.SubTotal ELSE 0 END) DESC) AS ResellerRank
+            SUM(CASE WHEN soh.OnlineOrderFlag = 0 THEN soh.SubTotal ELSE 0 END) AS ResellerSales
         FROM Sales.SalesOrderHeader soh
             INNER JOIN Person.Address a ON soh.ShipToAddressID = a.AddressID
             INNER JOIN [Person].[StateProvince] sp ON sp.[StateProvinceID] = a.[StateProvinceID]
@@ -61,7 +58,15 @@ WITH
         WHERE cr.Name = 'United States'
         GROUP BY a.City, sp.[Name]
     )
-SELECT cs.*
+SELECT
+    cs.City,
+    cs.[State],
+    cs.TotalSales,
+    DENSE_RANK() OVER(ORDER BY cs.TotalSales DESC) AS TotalRank,
+    cs.OnlineSales,
+    DENSE_RANK() OVER(ORDER BY cs.OnlineSales DESC) AS OnlineRank,
+    cs.ResellerSales,
+    DENSE_RANK() OVER(ORDER BY cs.ResellerSales DESC) AS ResellerRank
 FROM CITY_SALES cs
 WHERE NOT EXISTS (
     SELECT 1
