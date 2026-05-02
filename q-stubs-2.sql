@@ -31,8 +31,8 @@ WITH
         FROM [Sales].[SalesOrderHeader] soh
             INNER JOIN US_STORES_CUSTOMERS c
             ON soh.CustomerID = c.CustomerID
-        GROUP BY 
-    c.RetailerID
+        GROUP BY c.RetailerID
+        ORDER BY Revenue DESC
     ),
     RETAILER_LOCATIONS
     AS
