@@ -54,8 +54,8 @@ CREATE TABLE Auction.Auction
     InitialBidPrice MONEY NOT NULL DEFAULT 0,
     [ExpireDate] DATETIME2(0) NULL,
     AuctionStatus NVARCHAR(20) NOT NULL DEFAULT 'Active',
-    ListedDate DATETIME NOT NULL DEFAULT GETUTCDATE(),
-    UpdatedDate DATETIME,
+    ListedDate DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedDate DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
     WinningCustomerID INT NULL
 );
 
@@ -77,7 +77,7 @@ CREATE TABLE Auction.Bid
     AuctionID INT NOT NULL REFERENCES Auction.Auction(AuctionID),
     CustomerID INT NOT NULL REFERENCES Sales.Customer(CustomerID),
     BidAmount MONEY NOT NULL DEFAULT 0,
-    BidDate DATETIME NOT NULL DEFAULT GETDATE()
+    BidDate DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
 );
 
 -- Indexes for high workload
@@ -131,7 +131,7 @@ BEGIN
     END
 
     INSERT INTO Auction.Auction
-        (ProductID, InitialBidPrice, ExpireDate)
+        (ProductID, InitialBidPrice, [ExpireDate])
     VALUES
         (@ProductID, @InitialBidPrice, @ExpireDate);
 END
@@ -203,7 +203,10 @@ BEGIN
     IF @BidAmount IS NULL
         SET @BidAmount = @minnext;
     IF @BidAmount < @minnext
-        THROW 50005, 'Bid too low.', 1;
+    BEGIN
+        DECLARE @ErrMsg NVARCHAR(200) = 'Bid too low. Minimum bid is ' + CAST(@minnext AS VARCHAR(20));
+        THROW 50005, @ErrMsg, 1;
+    END
     IF @BidAmount > @maxbid
         SET @BidAmount = @maxbid;
 
@@ -236,14 +239,18 @@ BEGIN
     -- Description: This stored procedure removes the product from being listed as auctioned even if there
     -- might have been bids for that product.
     -- Notes: When users are checking their bid history this product should also show up as an auction cancelled
-    UPDATE Auction.Auction SET AuctionStatus = 'Cancelled' WHERE ProductID = @ProductID;
+    UPDATE Auction.Auction 
+    SET 
+        AuctionStatus = 'Cancelled',
+        UpdatedDate = SYSUTCDATETIME()
+    WHERE ProductID = @ProductID AND AuctionStatus = 'Active';
 END
 GO
 
 CREATE OR ALTER PROCEDURE Auction.uspListBidsOffersHistory(
     @CustomerID INT,
-    @StartTime DATETIME,
-    @EndTime DATETIME,
+    @StartTime DATETIME2,
+    @EndTime DATETIME2,
     @Active BIT
 )
 AS
