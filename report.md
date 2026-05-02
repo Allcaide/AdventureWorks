@@ -9,11 +9,13 @@
 | xxx | Fiifi Nyarko-Mensah |  |
 | yyy | Luis Alcaide |  |
 | 20251702 | Davide Corbo |  |
-| 20251105 | Backend Lead | kehinde.adewusi@gmail.com |
+| 20251105 | Backend Lead | 20251105@novaims.unl.pt |
 
 ## Abstract
 
-Provide a concise summary of the research, including the problem statement, methodology, key findings, and conclusions. The abstract should be 150-250 words and standalone comprehensible.
+This report details the design and implementation of a solution for business problems identified at AdventureWorks. The first objective addresses the requirement for a bidding system aimed at offloading old bicycle stocks. Utilizing T-SQL scripts compatible with SQL Server 2025, a series of idempotent DDL (Data Definition Language) and DML (Data Manipulation Language) scripts were engineered to serve as the database layer of the bidding system. The solution ensures structural integrity and re-runnability across local SQL Server and Azure SQL Database environments.
+
+The primary focus of this study, however, is a data-driven analysis to identify optimal locations for AdventureWorks' entry into the brick-and-mortar retail sector. To avoid competition with existing top retailers of fthe company, the expansion strategy mandates the selection of two U.S. cities that do not compete with any of AdventureWorks' existing top 30 US retailers.
 
 ---
 
@@ -53,6 +55,8 @@ SELECT @@VERSION;
 
 ## 4. Results
 
+### 4A Online Bidding System
+
 Present findings from the research. Use tables and figures to highlight key data and trends.
 
 ### Table 1: Summary Statistics
@@ -72,6 +76,19 @@ Present findings from the research. Use tables and figures to highlight key data
 Example placeholder for image:
 ![Results Distribution](./images/results-distribution.png)
 ```
+
+### 4B Brick and Mortar
+
+The solution to the Brick and Mortar problem is broken down as follows:
+
+```
+We consider only the SubTotal amount in the SalesOrderHeader table, ignoring the sales tax components.
+```
+
+1. Identify the Top 30 US Retailers, across all cities in the USA
+1. Identify `ALL` the cities in the USA where these Top 30 retailers have a presence.
+1. Exclude these cities in the following calculations
+1. Calculate the top cities by revenue, merging the individual customer data with the remaining retailer customers.
 
 ---
 
