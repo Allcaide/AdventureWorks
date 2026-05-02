@@ -42,3 +42,4 @@ SELECT DISTINCT u.City, u.State, u.Country
 FROM US_STORES_CUSTOMERS u
     INNER JOIN TOP_30_RETAILERS t
     ON u.RetailerID = t.RetailerID
+ORDER BY u.State, u.City
