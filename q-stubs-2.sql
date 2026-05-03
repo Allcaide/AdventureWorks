@@ -18,9 +18,10 @@ WITH
             INNER JOIN [Person].[StateProvince] sp
             ON sp.[StateProvinceID] = a.[StateProvinceID]
             INNER JOIN [Person].[CountryRegion] cr
-            ON cr.[CountryRegionCode] = sp.[CountryRegionCode] AND cr.[Name] = 'United States'
+            ON cr.[CountryRegionCode] = sp.[CountryRegionCode]
             INNER JOIN [Person].[AddressType] at
             ON at.[AddressTypeID] = bea.[AddressTypeID]
+        WHERE cr.[Name] = 'United States'
     ),
     TOP_30_RETAILERS
     AS
@@ -66,7 +67,9 @@ SELECT
     cs.OnlineSales,
     DENSE_RANK() OVER(ORDER BY cs.OnlineSales DESC) AS OnlineRank,
     cs.ResellerSales,
-    DENSE_RANK() OVER(ORDER BY cs.ResellerSales DESC) AS ResellerRank
+    DENSE_RANK() OVER(ORDER BY cs.ResellerSales DESC) AS ResellerRank,
+    (TotalSales * 0.4) + (OnlineSales * 0.6) AS PriorityScore,
+    DENSE_RANK() OVER(ORDER BY (TotalSales * 0.4) + (OnlineSales * 0.6) DESC) AS PriorityRank
 FROM CITY_SALES cs
 WHERE NOT EXISTS (
     SELECT 1
