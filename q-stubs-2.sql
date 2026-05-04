@@ -68,8 +68,8 @@ SELECT
     DENSE_RANK() OVER(ORDER BY cs.OnlineSales DESC) AS OnlineRank,
     cs.ResellerSales,
     DENSE_RANK() OVER(ORDER BY cs.ResellerSales DESC) AS ResellerRank,
-    (TotalSales * 0.4) + (OnlineSales * 0.6) AS PriorityScore,
-    DENSE_RANK() OVER(ORDER BY (TotalSales * 0.4) + (OnlineSales * 0.6) DESC) AS PriorityRank
+    (TotalSales * 0.3) + (OnlineSales * 0.7) AS PriorityScore,
+    DENSE_RANK() OVER(ORDER BY (TotalSales * 0.3) + (OnlineSales * 0.7) DESC) AS PriorityRank
 FROM CITY_SALES cs
 WHERE NOT EXISTS (
     SELECT 1
